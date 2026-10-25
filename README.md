@@ -9,7 +9,7 @@ Node.js 22.16 이상, Git, PostgreSQL 17, npm이 필요하다. Docker는 Postgre
 ```bash
 bash scripts/setup.sh
 docker compose up -d postgres
-# config/connections.local.json의 URL·토큰·provider·모델·관리자 계정을 사내 값으로 수정
+# config/connections.local.json에 토큰·provider·초기 모델·관리자 계정을 설정 (URL은 로그인 후 UI에서도 수정 가능)
 export PATH="$PWD/runtime/node/bin:$PATH" # setup이 로컬 Node를 설치한 경우
 npm run migrate
 npm start
@@ -21,7 +21,7 @@ npm start
 
 `config/connections.local.json` 한 파일에서 시스템 기본 URL·토큰·DB·관리자 인증을 관리한다. 실제 파일은 Git·Docker build에서 제외하고 파일 권한 600으로 둔다. [빈 연결 템플릿](config/connections.example.json)과 [필드 설명](config/README.md)을 참고한다. `CONTRIB_CONNECTIONS_FILE`은 다른 설정 파일의 경로를 지정한다. `DATABASE_URL`은 Docker 내부 DB 경로 등 실행 환경의 DB 접속만 재정의한다.
 
-대시보드 설정에서 팀원·commit email/계정·공동 담당 레포·기간·Confluence 루트를 등록한다. 팀 설정은 [예시](design/team-config.example.json)를 바탕으로 JSON으로 저장한다. GitHub 시스템 URL과 레포 URL의 호스트가 일치해야 하며 private repo의 API/Git 인증은 연결 파일의 GitHub 토큰에서 가져온다. Git clone 대상에는 토큰을 넣지 않는다.
+대시보드 **설정 · 모델**에서 시스템 URL을 수정하고, **팀 · 기간 / 저장소 / Confluence 루트 / 평가 기준** 탭의 입력 폼으로 팀원·계정·공동 담당·평가 기간·루트와 저장소 연결·항목 비중을 편집한다. 항목별 추가·삭제를 지원하며 JSON을 직접 편집할 필요가 없다. 설정 저장은 새 수집부터 적용하고, 이전 설정값으로 되돌려도 현재 적용할 설정이 올바르게 선택된다. 기존 수집·평가의 설정 본문은 보존한다. [설정 예시](design/team-config.example.json)는 저장 구조를 설명한다. GitHub 시스템 URL과 레포 URL의 호스트가 일치해야 하며 private repo의 API/Git 인증은 연결 파일의 GitHub 토큰에서 가져온다. Git clone 대상에는 토큰을 넣지 않는다.
 
 Confluence Data Center는 `deployment: data_center`와 bearer PAT, Cloud는 `deployment: cloud`와 설치에 맞는 basic/email+API token 또는 bearer 인증을 설정한다. URL에 `/wiki` 같은 context path를 포함한다. `transport: rest`가 기본이며 원본·하위·버전·댓글 수집은 결정적 코드로 수행한다. MCP는 `transport: mcp`와 도구 binding을 설정해 같은 수집 계약을 사용한다. 구체적인 설정과 검증 한계는 [연결 안내](config/README.md)에 기록한다. 자체 OAuth·SSO 인증 상태는 임의로 복사하지 않는다.
 
@@ -29,11 +29,11 @@ OpenCode는 기본적으로 평가용 로컬 인스턴스를 관리하며 프로
 
 OpenAI 실제 시험은 `provider_id: openai`, `protocol: responses`, `url: https://api.openai.com/v1`을 사용한다. 사내 Chat Completions 호환 LLM은 `provider_id`를 사내 ID로 바꾸고 `protocol: chat_completions`, 사내 endpoint·모델·토큰을 지정한다. `llm.models`와 `default_model_id`에서 허용 목록·기본값을 관리하며 UI에서 실행별 선택한다. 외부 LLM로 자동 대체하지 않는다. 회사 CA·프록시는 `NODE_EXTRA_CA_CERTS`, `HTTPS_PROXY`, `HTTP_PROXY`, `NO_PROXY`와 Git의 사내 CA 설정을 실행 계정에 적용한다. TLS 검증을 끄지 않는다.
 
-모델을 추가할 때는 연결 파일의 `systems.opencode.llm.models`에 실제 `model_id`, 화면의 `display_name`, `enabled: true`를 등록한다. 대시보드의 **설정 · 모델 → 실제 호출 확인**으로 시험한 뒤 **수집 현황 → 평가 실행 → 평가 모델**에서 선택한다. 시험 결과·확인 시각과 최근 평가 호출 상태를 구분해 표시한다. 확인 버튼은 실제 모델 API를 호출하며 사용량이 발생한다.
+모델은 **설정 · 모델 → 모델 선택 → OpenCode 연결 · 모델 불러오기**에서 실제 OpenCode SDK의 `/provider` 목록을 조회한다. 연결된 공급자의 텍스트·도구 호출 모델을 가져오며, 폐기된 모델과 연결되지 않은 공급자는 제외한다. 관리형 실행은 설정된 사내 공급자로 범위를 제한한다. 목록 조회는 LLM을 호출하지 않는다. **기본 모델로 저장**은 로컬 연결 파일에 반영하며 **수집 현황 → 평가 실행 → 평가 모델**에서 실행별로 다른 모델도 선택한다. **실제 호출 확인**은 선택 모델의 구조화 응답을 시험하고 사용량이 발생한다. 목록에 있다는 사실만으로 잔액·모델별 권한·구조화 응답 성공까지 보장하지는 않는다.
 
-선택 모델·endpoint·프로토콜·구조화 출력 설정·문맥 한도는 실행에 고정한다. 기본 모델을 바꿔도 이전 실행은 바뀌지 않는다. 교정·재개는 원 모델을 유지하며 설정이 달라지거나 비활성화됐으면 중단한다. 다른 모델을 비교하려면 같은 원본 스냅샷으로 새 평가를 시작한다. 현재 연결 파일은 한 provider의 여러 모델을 지원한다.
+선택 모델·endpoint·프로토콜·구조화 출력 설정·문맥 한도는 실행에 고정한다. 기본 모델을 바꿔도 이전 실행은 바뀌지 않는다. 교정·재개는 원 모델을 유지하며 설정이 달라지거나 비활성화됐으면 중단한다. 다른 모델을 비교하려면 같은 원본 스냅샷으로 새 평가를 시작한다. 관리형 실행은 한 공급자의 여러 모델을, 기존 OpenCode 서버 연결은 연결된 여러 공급자의 모델을 지원한다. 동명 모델은 `provider_id/model_id`로 구분한다. 공급자 인증·도구 정책은 기존 서버에서 관리한다.
 
-전체 컨테이너 실행은 `docker compose --profile app up --build -d`다. 최초 schema는 web/worker 시작 시 적용하며 명시적 `npm run migrate`도 제공한다. 실제 설정은 읽기 전용 mount, 원본·Git·OpenCode 작업 상태는 `runtime/`, DB는 별도 영속 volume을 사용한다. `POSTGRES_PASSWORD`와 연결 파일의 DB 암호를 일치시킨다. 기존 사내 MCP 실행 파일·인증이 호스트에 있으면 host-native web/worker가 우선이다.
+전체 컨테이너 실행은 `docker compose --profile app up --build -d`다. 최초 schema는 web/worker 시작 시 적용하며 명시적 `npm run migrate`도 제공한다. UI에서 설정을 저장할 수 있도록 web의 `config` 디렉터리는 쓰기 가능한 mount이며 worker는 읽기 전용 mount다. 원본·Git·OpenCode 작업 상태는 `runtime/`, DB는 별도 영속 volume을 사용한다. `POSTGRES_PASSWORD`와 연결 파일의 DB 암호를 일치시킨다. 기존 사내 MCP 실행 파일·인증이 호스트에 있으면 host-native web/worker가 우선이다.
 
 회사로 소스만 가져갈 때는 `npm run package:source`로 `runtime/release/`의 압축 파일과 SHA-256을 만든다. 실제 연결 파일·토큰·DB·원본·node_modules는 포함하지 않으며 파일별 해시 manifest를 넣는다. 이 파일은 현재 평가 결과의 백업과 구분한다. 회사에서 Node 22 환경의 `npm ci`, `scripts/init.ts`, URL·토큰·모델 설정, DB migration, web·worker 실행을 진행한다. 승인된 사내 npm registry·CA를 실행 환경에 설정할 수 있다.
 

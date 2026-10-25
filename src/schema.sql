@@ -1,4 +1,8 @@
 CREATE TABLE IF NOT EXISTS configurations(id text PRIMARY KEY, body jsonb NOT NULL, created_at timestamptz NOT NULL DEFAULT now());
+ALTER TABLE configurations ADD COLUMN IF NOT EXISTS activated_at timestamptz;
+UPDATE configurations SET activated_at=created_at WHERE activated_at IS NULL;
+ALTER TABLE configurations ALTER COLUMN activated_at SET DEFAULT now();
+ALTER TABLE configurations ALTER COLUMN activated_at SET NOT NULL;
 CREATE TABLE IF NOT EXISTS collection_runs(id text PRIMARY KEY, configuration_id text NOT NULL REFERENCES configurations(id), status text NOT NULL, summary jsonb NOT NULL DEFAULT '{}', created_at timestamptz NOT NULL DEFAULT now(), finished_at timestamptz);
 CREATE TABLE IF NOT EXISTS inventory(id text PRIMARY KEY, collection_id text NOT NULL REFERENCES collection_runs(id), source_id text NOT NULL, object_key text NOT NULL, kind text NOT NULL, status text NOT NULL, details jsonb NOT NULL DEFAULT '{}', UNIQUE(collection_id,source_id,object_key,kind));
 CREATE TABLE IF NOT EXISTS evidence(id text PRIMARY KEY, collection_id text NOT NULL REFERENCES collection_runs(id), source_id text NOT NULL, object_id text NOT NULL, revision text NOT NULL, kind text NOT NULL, title text NOT NULL, url text NOT NULL, occurred_at timestamptz, actors jsonb NOT NULL, raw_hash text NOT NULL, body text NOT NULL, metadata jsonb NOT NULL, UNIQUE(collection_id,source_id,object_id,revision,kind));

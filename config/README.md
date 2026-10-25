@@ -1,6 +1,6 @@
 # 시스템 연결 설정
 
-각 시스템의 URL과 토큰은 `config/connections.local.json` 한 파일에서 관리한다. [connections.example.json](connections.example.json)은 빈 토큰과 가상 주소만 담은 템플릿이다. `npx tsx scripts/init.ts`는 실제 파일이 없을 때 템플릿을 복사하고 관리자 암호·세션 비밀을 무작위로 생성한다. 실제 URL·토큰·모델은 이 로컬 파일에 입력한다. 현재 테스트의 실제 연결 파일은 Git·Docker build에서 제외한다.
+각 시스템의 URL과 토큰은 `config/connections.local.json` 한 파일에서 관리한다. [connections.example.json](connections.example.json)은 빈 토큰과 가상 주소만 담은 템플릿이다. `npx tsx scripts/init.ts`는 실제 파일이 없을 때 템플릿을 복사하고 관리자 암호·세션 비밀을 무작위로 생성한다. 최초 토큰·provider·초기 모델·관리자 인증은 이 로컬 파일에 입력한다. 이후 시스템 URL·연결 방식·기본 모델은 대시보드 **설정 · 모델**의 폼에서도 저장할 수 있다. UI 저장은 파일 권한 600과 인증·MCP 바인딩·수정하지 않은 필드를 보존하며 원자적 파일 교체와 revision 충돌 검사로 처리한다. 수집·평가가 실행 중일 때는 연결 주소 변경을 차단한다. 현재 테스트의 실제 연결 파일은 Git·Docker build에서 제외한다.
 
 | 파일 | 관리할 내용 | Git 관리 |
 | --- | --- | --- |
@@ -23,7 +23,7 @@ Confluence HTML 본문과 이전 버전은 그대로 보존하고, 편집자의 
 | `systems.github.url`, `auth.token` | GitHub 기본 주소와 접근 토큰. API·Git 호출에 맞는 인증 형식은 adapter에서 적용 |
 | `systems.opencode.server_url`, `server_auth` | worker가 접속할 OpenCode 서버 주소·인증. 실제 설치 버전의 인증 방식 사용. 인증 없는 로컬 서버의 예시 값은 `none` |
 | `systems.opencode.llm` | OpenCode가 호출할 사내 LLM의 endpoint·provider·프로토콜·토큰 |
-| `systems.opencode.llm.models` | 선택할 수 있는 모델 ID·표시 이름·사용 허용 여부·확인된 문맥 한도. 예시 모델명은 실제 제공 모델을 보장하지 않음 |
+| `systems.opencode.llm.models` | 선택할 수 있는 모델 ID·표시 이름·사용 허용 여부·확인된 문맥 한도. 선택적 `provider_id`는 복수 공급자를 구분하고 `available`은 최근 OpenCode 목록의 포함 여부를 기록. 예시 모델명은 실제 제공 모델을 보장하지 않음 |
 | `systems.opencode.llm.default_model_id` | 실행에서 모델을 지정하지 않았을 때 사용할 기본 모델. 사용 허용된 `models` 항목을 참조 |
 | `systems.opencode.llm.models[].reasoning_effort`, `max_output_tokens` | 선택적 추론량·응답 토큰 상한. 모델이 지원하는 값만 입력하며 실행 snapshot에 고정. 사내 API 미지원 시 생략 |
 | `systems.opencode.llm.strict_tools` | 구조화 도구의 strict 모드. OpenAI는 기본 true, 사내 호환 API는 지원 여부에 맞춰 명시 |
@@ -38,7 +38,7 @@ GitHub CI는 연결한 PR head의 check-run 응답을 보존한다. 실행 관�
 
 `enabled`는 사용 허용 여부이며 실제 호출 가능 여부와 구분한다. OpenCode의 실제 모델 목록·접속 권한·구조화 응답 호환성을 확인해 선택 상태와 실패 사유를 표시한다. 목록 조회에 실패했다고 설정 모델을 곧바로 삭제하거나 다른 모델을 자동 선택하지 않는다. 설치 버전에 따라 지원되는 명시적 모델 확인·시험 호출을 사용할 수 있다. 문맥 한도를 알 수 없으면 `null`로 유지하고 다른 모델의 한도를 재사용하지 않는다.
 
-현재 구현은 설정의 허용 목록을 읽고 **실제 호출 확인** 버튼으로 명시적 시험을 수행한다. provider의 모델 자동 탐색은 하지 않는다. 시험 결과·시각은 `model_checks`에 보존하며 최근 평가의 응답 검증 상태와 구분한다. endpoint·프로토콜·문맥 한도·strict 설정이 바뀌면 이전 시험 결과를 새 설정의 확인 결과로 재사용하지 않는다. 이 확인은 OpenCode 응답의 provider/model ID와 구조화 출력을 확인하며, 사내 모델 별칭 뒤의 실제 가중치·배포 revision까지 증명하지는 않는다.
+현재 구현은 **모델 선택 → OpenCode 연결 · 모델 불러오기**에서 SDK `provider.list`를 조회해 연결된 공급자의 모델을 동기화한다. 관리형 실행은 설정한 공급자로 한정하며 기존 서버 연결에서는 복수 공급자를 지원한다. 같은 모델 ID도 공급자가 다르면 별도 항목이다. 조회에서 빠진 기존 항목은 과거 실행을 위해 보존하되 새 선택에서는 비활성으로 표시한다. 기존 모델의 문맥 한도·추론량·응답 상한은 동기화로 덮어쓰지 않는다. 새 항목은 OpenCode의 한도를 사용하고 기본 모델을 자동 변경하지 않는다. 목록 조회 실패 시 파일과 기본값은 그대로 보존한다. **실제 호출 확인** 버튼은 별도의 명시적 모델 시험이다. 시험 결과·시각은 `model_checks`에 보존하며 최근 평가의 응답 검증 상태와 구분한다. endpoint·프로토콜·문맥 한도·strict 설정이 바뀌면 이전 시험 결과를 새 설정의 확인 결과로 재사용하지 않는다. 이 확인은 OpenCode 응답의 provider/model ID와 구조화 출력을 확인하며, 사내 모델 별칭 뒤의 실제 가중치·배포 revision까지 증명하지는 않는다.
 
 기존 MCP가 자체 OAuth·SSO 인증을 사용하는 경우 그 인증 저장소를 이 파일로 복사하지 않는다. 지원되는 기존 인증 경로를 재사용한다. Confluence 토큰을 사용하는 API·MCP 경로는 이 연결 파일에서 필요한 값을 전달받도록 구성한다. 실제 선택 경로에 불필요한 토큰은 요구하지 않는다.
 

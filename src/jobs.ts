@@ -5,7 +5,7 @@ import {hash,validateTeam,readConnections,resolveModel,TeamConfig,redact} from '
 import {collectGithub} from './collectors/github.js';
 import {collectWiki} from './collectors/confluence.js';
 import {evaluate,evaluationContract} from './evaluation/engine.js';
-export async function saveConfiguration(raw:unknown){const t=validateTeam(raw);const id=hash(t);await db.query('INSERT INTO configurations(id,body) VALUES($1,$2) ON CONFLICT DO NOTHING',[id,t]);return {id,body:t};}
+export async function saveConfiguration(raw:unknown,client?:import('pg').PoolClient){const t=validateTeam(raw);const id=hash(t);await (client||db).query('INSERT INTO configurations(id,body) VALUES($1,$2) ON CONFLICT(id) DO UPDATE SET activated_at=clock_timestamp()',[id,t]);return {id,body:t};}
 export async function createCollection(configurationId:string,actor='system'){await one('SELECT id FROM configurations WHERE id=$1',[configurationId]);const id=randomUUID();await transaction(async c=>{await c.query(`INSERT INTO collection_runs(id,configuration_id,status) VALUES($1,$2,'pending')`,[id,configurationId]);await c.query(`INSERT INTO jobs(id,kind,target_id) VALUES($1,'collect',$2)`,[randomUUID(),id]);});await audit(actor,'collection.created',id);return id;}
 export async function cancelJob(id:string,actor:string){
   const result=await transaction(async c=>{

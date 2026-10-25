@@ -9,7 +9,7 @@ import {createGateway} from './gateway.js';
 import {permanentLlmError} from './errors.js';
 import {randomUUID} from 'node:crypto';
 const exec=promisify(execFile);
-type Connection={url:string;directory:string;headers:Record<string,string>;process?:ChildProcess;shutdown?:()=>void};
+type Connection={url:string;directory?:string;headers:Record<string,string>;version?:string;process?:ChildProcess;shutdown?:()=>void};
 const instances=new Map<string,Connection & {process:ChildProcess;shutdown:()=>void}>();
 const starts=new Map<string,Promise<Connection>>();
 const processNamespace=randomUUID();
@@ -30,11 +30,17 @@ async function startOpenCode(model:ReturnType<typeof resolveModel>,c:Connections
   const headers:Record<string,string>={};
   if(oc.server_auth.scheme==='basic')headers.Authorization='Basic '+Buffer.from((oc.server_auth.username||'opencode')+':'+(oc.server_auth.password||'')).toString('base64');
   if(oc.server_auth.scheme==='bearer'&&oc.server_auth.token)headers.Authorization='Bearer '+oc.server_auth.token;
-  if(!oc.manage_process)return {url:oc.server_url,directory,headers};
+  if(!oc.manage_process){
+    const response=await fetch(oc.server_url.replace(/\/$/,'')+'/global/health',{headers,signal:AbortSignal.timeout(10000),redirect:'error'});
+    if(!response.ok)throw new Error('OpenCode 연결 실패: HTTP '+response.status);
+    const health=await response.json() as any;
+    if(health.healthy!==true||typeof health.version!=='string')throw new Error('OpenCode 상태 응답을 확인할 수 없습니다');
+    return {url:oc.server_url,headers,version:health.version};
+  }
   const version=await runtimeVersion();if(!version.startsWith('1.'))throw new Error('이 adapter는 OpenCode 1.x용입니다. 설치 버전에 맞는 client adapter가 필요합니다');
   const url=new URL(oc.server_url);if(!['localhost','127.0.0.1'].includes(url.hostname))throw new Error('관리형 OpenCode는 로컬 주소여야 합니다');
   const probe=net.createServer();await new Promise<void>((resolve,reject)=>{probe.once('error',reject);probe.listen(0,'127.0.0.1',resolve);});const port=(probe.address() as net.AddressInfo).port;await new Promise<void>((resolve,reject)=>probe.close(e=>e?reject(e):resolve()));url.port=String(port);
-  const config:any={autoupdate:false,share:'disabled',enabled_providers:[llm.provider_id],model:model.provider_id+'/'+model.model_id,small_model:model.provider_id+'/'+model.model_id,permission:{'*':'deny',StructuredOutput:'allow'},mcp:{},provider:{[llm.provider_id]:{...(llm.provider_id==='openai'?{}:{npm:llm.protocol==='responses'?'@ai-sdk/openai':'@ai-sdk/openai-compatible'}),name:'Configured evaluation provider',options:{baseURL:'{env:CORP_LLM_BASE_URL}',apiKey:'{env:CORP_LLM_TOKEN}'},models:Object.fromEntries(llm.models.filter(x=>x.enabled).map(x=>[x.model_id,{name:x.display_name,...(x.context_limit_tokens?{limit:{context:x.context_limit_tokens,output:16000}}:{})}]))}}};
+  const config:any={autoupdate:false,share:'disabled',enabled_providers:[llm.provider_id],model:model.provider_id+'/'+model.model_id,small_model:model.provider_id+'/'+model.model_id,permission:{'*':'deny',StructuredOutput:'allow'},mcp:{},provider:{[llm.provider_id]:{...(llm.provider_id==='openai'?{}:{npm:llm.protocol==='responses'?'@ai-sdk/openai':'@ai-sdk/openai-compatible'}),name:'Configured evaluation provider',options:{baseURL:'{env:CORP_LLM_BASE_URL}',apiKey:'{env:CORP_LLM_TOKEN}'},models:Object.fromEntries(llm.models.filter(x=>x.enabled&&(x.provider_id||llm.provider_id)===llm.provider_id).map(x=>[x.model_id,{name:x.display_name,...(x.context_limit_tokens?{limit:{context:x.context_limit_tokens,output:16000}}:{})}]))}}};
   const configFile=path.join(directory,'opencode.json');await fs.writeFile(configFile,JSON.stringify(config,null,2),{mode:0o600});
   const gateway=await createGateway(llm,model.model_id,model);
   const env:NodeJS.ProcessEnv={PATH:process.env.PATH,HOME:process.env.HOME,XDG_CONFIG_HOME:path.join(runtime,'opencode',key,'config'),XDG_DATA_HOME:path.join(runtime,'opencode',key,'data'),XDG_CACHE_HOME:path.join(runtime,'opencode',key,'cache'),OPENCODE_CONFIG:configFile,OPENCODE_DISABLE_AUTOUPDATE:'true',OPENCODE_DISABLE_DEFAULT_PLUGINS:'true',CORP_LLM_BASE_URL:gateway.url,CORP_LLM_TOKEN:gateway.token,NO_PROXY:[process.env.no_proxy||process.env.NO_PROXY||'','localhost','127.0.0.1'].filter(Boolean).join(','),HTTPS_PROXY:process.env.https_proxy||process.env.HTTPS_PROXY,HTTP_PROXY:process.env.http_proxy||process.env.HTTP_PROXY,NODE_EXTRA_CA_CERTS:process.env.NODE_EXTRA_CA_CERTS};
@@ -43,17 +49,17 @@ async function startOpenCode(model:ReturnType<typeof resolveModel>,c:Connections
   const shutdown=()=>{gateway.server.closeAllConnections();gateway.server.close();signalChild(child,'SIGTERM');const timer=setTimeout(()=>signalChild(child,'SIGKILL'),1500);timer.unref();child.once('exit',()=>clearTimeout(timer));};
   child.once('exit',()=>{gateway.server.closeAllConnections();gateway.server.close();});child.once('error',()=>gateway.server.close());
   const log=path.join(runtime,'opencode',key,'runtime.log');for(const stream of [child.stdout,child.stderr])stream?.on('data',chunk=>void fs.appendFile(log,redact(chunk.toString())+'\n',{mode:0o600}));
-  const entry={process:child,url:url.origin,directory,headers,shutdown};instances.set(key,entry);
+  const entry={process:child,url:url.origin,directory,headers,version,shutdown};instances.set(key,entry);
   for(let i=0;i<80;i++){if(child.exitCode!==null)throw new Error('OpenCode 시작 실패. 비밀 제거된 runtime log를 확인하세요');try{const r=await fetch(url.origin+'/global/health',{headers,signal:AbortSignal.timeout(1000)});if(r.ok)return entry;}catch{}await new Promise(r=>setTimeout(r,250));}
   shutdown();instances.delete(key);throw new Error('OpenCode 시작 시간 초과');
 }
 export async function callOpenCode(prompt:string,schema:Record<string,unknown>,model:ReturnType<typeof resolveModel>,options:{signal?:AbortSignal;system?:string}={}){
-  const c=readConnections();if(!c.systems.opencode.llm.token)throw new Error('사내 LLM 토큰이 설정되지 않았습니다');
+  const c=readConnections();if(c.systems.opencode.manage_process&&!c.systems.opencode.llm.token)throw new Error('사내 LLM 토큰이 설정되지 않았습니다');
   validateModelSnapshot(c,model);
-  const instance=await ensureOpenCode(model,c);const version=await runtimeVersion();
+  const instance=await ensureOpenCode(model,c);const version=instance.version||await runtimeVersion();
   const client=createOpencodeClient({baseUrl:instance.url,headers:instance.headers,directory:instance.directory});
   if(c.systems.opencode.transport==='cli'){
-    const {stdout}=await exec(binary,['run','--attach',instance.url,'--dir',instance.directory,'--model',model.provider_id+'/'+model.model_id,'--format','json',prompt+'\nReturn only JSON matching this schema: '+JSON.stringify(schema)],{cwd:instance.directory,maxBuffer:32e6,timeout:240000,env:{PATH:process.env.PATH,HOME:process.env.HOME,...(c.systems.opencode.server_auth.password?{OPENCODE_SERVER_PASSWORD:c.systems.opencode.server_auth.password}:{})},signal:options.signal});
+    const {stdout}=await exec(binary,['run','--attach',instance.url,...(instance.directory?['--dir',instance.directory]:[]),'--model',model.provider_id+'/'+model.model_id,'--format','json',prompt+'\nReturn only JSON matching this schema: '+JSON.stringify(schema)],{cwd:instance.directory,maxBuffer:32e6,timeout:240000,env:{PATH:process.env.PATH,HOME:process.env.HOME,...(c.systems.opencode.server_auth.password?{OPENCODE_SERVER_PASSWORD:c.systems.opencode.server_auth.password}:{})},signal:options.signal});
     const events=stdout.trim().split('\n').filter(Boolean).map(x=>JSON.parse(x));const text=events.filter(x=>x.type==='text').map(x=>x.part?.text||'').join('');const output=JSON.parse(text.replace(/^```(?:json)?\s*/,'').replace(/\s*```$/,''));
     return {output,raw:events,sessionId:events.find(x=>x.sessionID)?.sessionID||null,observedModel:null,version};
   }

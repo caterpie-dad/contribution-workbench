@@ -6,7 +6,7 @@ import './network.js';
 
 export const root = process.cwd();
 export const runtime = path.resolve(root, process.env.CONTRIB_RUNTIME || 'runtime');
-const modelSchema = z.object({ model_id: z.string().min(1), display_name: z.string(), enabled: z.boolean(), context_limit_tokens: z.number().positive().nullable().optional(), reasoning_effort:z.enum(['none','minimal','low','medium','high','xhigh']).nullable().optional(), max_output_tokens:z.number().int().positive().nullable().optional() });
+const modelSchema = z.object({ provider_id:z.string().min(1).optional(), model_id: z.string().min(1), display_name: z.string(), enabled: z.boolean(), available:z.boolean().optional(), context_limit_tokens: z.number().positive().nullable().optional(), reasoning_effort:z.enum(['none','minimal','low','medium','high','xhigh']).nullable().optional(), max_output_tokens:z.number().int().positive().nullable().optional() });
 const authSchema = z.object({ scheme: z.enum(['none','bearer','basic']).default('bearer'), token: z.string().nullable().optional(), username: z.string().nullable().optional(), password: z.string().nullable().optional() });
 const sourceSchema = z.object({ url: z.string().url(), deployment: z.string(), auth: authSchema, api_url: z.string().url().optional() });
 const connectionsSchema = z.object({ example_only: z.literal(false), systems: z.object({
@@ -28,28 +28,33 @@ export type TeamConfig = {
   demo?: { docs_surrogate:boolean; github_api:boolean; provenance_notice:string };
 };
 
+export function connectionsFile(){return path.resolve(root, process.env.CONTRIB_CONNECTIONS_FILE || 'config/connections.local.json');}
 export function readConnections(): Connections {
-  const filename = path.resolve(root, process.env.CONTRIB_CONNECTIONS_FILE || 'config/connections.local.json');
+  const filename = connectionsFile();
   let raw: unknown;
   try { raw = JSON.parse(fs.readFileSync(filename,'utf8')); } catch { throw new Error('연결 설정 파일을 읽을 수 없습니다: CONTRIB_CONNECTIONS_FILE'); }
+  return validateConnections(raw);
+}
+export function validateConnections(raw:unknown):Connections {
   const result=connectionsSchema.safeParse(raw);
   if (!result.success) throw new Error('연결 설정 오류: '+result.error.issues.map(x=>x.path.join('.')+' '+x.code).join(', '));
   const c=result.data; const llm=c.systems.opencode.llm;
-  if (new Set(llm.models.map(m=>m.model_id)).size!==llm.models.length) throw new Error('모델 ID가 중복됩니다');
-  if (!llm.models.some(m=>m.model_id===llm.default_model_id&&m.enabled)) throw new Error('default_model_id는 사용 허용된 모델이어야 합니다');
-  for(const url of [c.systems.github.url,c.systems.confluence.url,c.systems.opencode.server_url,llm.url]) { const u=new URL(url); if(u.username||u.password||u.search) throw new Error('연결 URL에는 자격 정보·query를 넣을 수 없습니다'); }
+  if (new Set(llm.models.map(m=>(m.provider_id||llm.provider_id)+'/'+m.model_id)).size!==llm.models.length) throw new Error('모델 ID가 중복됩니다');
+  if (!llm.models.some(m=>(m.provider_id||llm.provider_id)===llm.provider_id&&m.model_id===llm.default_model_id&&m.enabled)) throw new Error('default_model_id는 사용 허용된 모델이어야 합니다');
+  for(const url of [c.systems.github.url,c.systems.github.api_url,c.systems.confluence.url,c.systems.confluence.api_url,c.systems.confluence.mcp?.url,c.systems.opencode.server_url,llm.url].filter((x):x is string=>!!x)) { const u=new URL(url); if(!['http:','https:'].includes(u.protocol)||u.username||u.password||u.search||u.hash) throw new Error('연결 URL은 인증 정보·query·fragment가 없는 HTTP(S) 주소여야 합니다'); }
   return c;
 }
-export function safeConnections(c:Connections) { return { github:{url:c.systems.github.url,deployment:c.systems.github.deployment,configured:!!c.systems.github.auth.token}, confluence:{url:c.systems.confluence.url,deployment:c.systems.confluence.deployment,transport:c.systems.confluence.transport,configured:!!c.systems.confluence.auth.token||!!c.systems.confluence.mcp}, opencode:{server_url:c.systems.opencode.server_url,provider_id:c.systems.opencode.llm.provider_id,default_model_id:c.systems.opencode.llm.default_model_id,models:c.systems.opencode.llm.models,configured:!!c.systems.opencode.llm.token} }; }
-export function resolveModel(c:Connections, selection?:{provider_id:string;model_id:string}) {
+export function safeConnections(c:Connections) { return { revision:hash(c), github:{url:c.systems.github.url,api_url:c.systems.github.api_url||'',deployment:c.systems.github.deployment,configured:!!c.systems.github.auth.token}, confluence:{url:c.systems.confluence.url,api_url:c.systems.confluence.api_url||'',deployment:c.systems.confluence.deployment,transport:c.systems.confluence.transport,mcp_url:c.systems.confluence.mcp?.url||'',configured:!!c.systems.confluence.auth.token||!!c.systems.confluence.mcp}, opencode:{server_url:c.systems.opencode.server_url,manage_process:c.systems.opencode.manage_process,transport:c.systems.opencode.transport,llm_url:c.systems.opencode.llm.url,protocol:c.systems.opencode.llm.protocol,provider_id:c.systems.opencode.llm.provider_id,default_model_id:c.systems.opencode.llm.default_model_id,models:c.systems.opencode.llm.models,configured:!c.systems.opencode.manage_process||!!c.systems.opencode.llm.token} }; }
+export function resolveModel(c:Connections, selection?:{provider_id:string;model_id:string}, allowUnavailable=false) {
   const llm=c.systems.opencode.llm; const selected=selection||{provider_id:llm.provider_id,model_id:llm.default_model_id};
-  const model=llm.models.find(m=>m.model_id===selected.model_id&&m.enabled);
-  if(selected.provider_id!==llm.provider_id||!model) throw new Error('선택 모델이 허용 목록에 없습니다');
+  const model=llm.models.find(m=>(m.provider_id||llm.provider_id)===selected.provider_id&&m.model_id===selected.model_id&&m.enabled);
+  if(!model||(!allowUnavailable&&model.available===false)) throw new Error('선택 모델이 연결된 허용 목록에 없습니다');
+  if(c.systems.opencode.manage_process&&selected.provider_id!==llm.provider_id)throw new Error('관리형 OpenCode의 공급자가 다릅니다');
   return {...selected, context_limit_tokens:model.context_limit_tokens??null, protocol:llm.protocol,endpoint:llm.url,strict_tools:llm.strict_tools??(llm.provider_id==='openai'),reasoning_effort:model.reasoning_effort??null,max_output_tokens:model.max_output_tokens??null};
 }
 export type ResolvedModel = ReturnType<typeof resolveModel>;
 export function validateModelSnapshot(c:Connections, snapshot:ResolvedModel) {
-  const current=resolveModel(c,{provider_id:snapshot.provider_id,model_id:snapshot.model_id});
+  const current=resolveModel(c,{provider_id:snapshot.provider_id,model_id:snapshot.model_id},true);
   for(const field of ['endpoint','protocol','strict_tools','context_limit_tokens','reasoning_effort','max_output_tokens'] as const) {
     if((snapshot[field]??null)!==(current[field]??null))throw new Error(`모델 ${field} 설정이 실행 snapshot과 다릅니다. 원 설정을 복원하거나 새 평가 실행을 만드세요`);
   }
@@ -62,6 +67,9 @@ export function validateTeam(raw:unknown):TeamConfig {
   checkSecrets(raw);
   const t=raw as TeamConfig;
   if(!Array.isArray(t.members)||!Array.isArray(t.repositories)||!t.sources||!t.period||!t.evaluation_policy) throw new Error('팀 설정 필수 항목이 누락되었습니다');
+  const core=z.object({timezone:z.string().min(1),members:z.array(z.object({person_id:z.string().min(1),display_name:z.string().trim().min(1),role_profile:z.string().trim().min(1),identities:z.object({github_login:z.string(),commit_emails:z.array(z.string().email()),confluence_account_ref:z.string()}),repository_assignments:z.array(z.object({repository_id:z.string().min(1),expected_role:z.string().trim().min(1),valid_from:z.string(),valid_until_exclusive:z.string().nullable()}))})),repositories:z.array(z.object({repository_id:z.string().min(1),source_id:z.string().min(1),url:z.string().url(),context_paths:z.array(z.string()),docs_paths:z.array(z.string()).optional()})),sources:z.object({github:z.object({source_id:z.string().min(1),connection_ref:z.string(),ref_scope:z.array(z.string())}),confluence:z.object({source_id:z.string().min(1),connection_ref:z.string(),roots:z.array(z.object({root_id:z.string().min(1),page_url:z.string().url(),page_id:z.string().optional(),include_root:z.boolean(),repository_ids:z.array(z.string()).optional()}))})}),evaluation_policy:z.object({rubric_version:z.string().trim().min(1),finalization:z.literal('manager_review'),missing_score:z.null()}),collection_policy:z.record(z.string(),z.unknown())}).safeParse(t);
+  if(!core.success)throw new Error('팀 설정 입력을 확인하세요: '+core.error.issues.map(x=>x.path.join('.')).join(', '));
+  try{new Intl.DateTimeFormat('en',{timeZone:t.timezone});}catch{throw new Error('팀 시간대를 확인하세요');}
   const start=Date.parse(t.period.start_inclusive),end=Date.parse(t.period.end_exclusive);
   if(!Number.isFinite(start)||!Number.isFinite(end)||start>=end) throw new Error('평가 기간이 잘못되었습니다');
   if(!Number.isFinite(Date.parse(t.period.as_of)))throw new Error('관찰 시점이 잘못되었습니다');
@@ -72,9 +80,15 @@ export function validateTeam(raw:unknown):TeamConfig {
   if(t.repositories.some(repo=>repo.source_id!==t.sources.github.source_id||repo.repository_id===t.sources.confluence.source_id))throw new Error('레포의 source_id 참조 또는 Confluence와 겹친 레포 ID를 확인하세요');
   const ids=new Set(t.repositories.map(x=>x.repository_id));
   const accountOwners=new Map<string,string>();for(const person of t.members){const identities=[...(person.identities?.commit_emails||[]).map(email=>['email',email]),['github',person.identities?.github_login],['confluence',person.identities?.confluence_account_ref]];for(const [namespace,account] of identities){if(!account)continue;const key=namespace+':'+account.toLowerCase();if(accountOwners.has(key)&&accountOwners.get(key)!==person.person_id)throw new Error('동일 계정이 여러 팀원에 연결되었습니다');accountOwners.set(key,person.person_id);}}
-  for(const person of t.members){ if(!person.person_id||!person.display_name||!Array.isArray(person.identities?.commit_emails))throw new Error('팀원 계정 매핑이 필요합니다'); for(const r of person.repository_assignments)if(!ids.has(r.repository_id))throw new Error('담당 레포 참조가 없습니다'); }
+  const dateValid=(value:string)=>/^\d{4}-\d{2}-\d{2}$/.test(value)&&Number.isFinite(Date.parse(value))&&new Date(value).toISOString().slice(0,10)===value;
+  for(const person of t.members){
+    if(!person.identities.github_login&&!person.identities.confluence_account_ref&&!person.identities.commit_emails.length)throw new Error(person.display_name+': GitHub·커밋 이메일·Confluence 중 하나의 계정이 필요합니다');
+    const assigned=new Set<string>();
+    for(const r of person.repository_assignments){if(!ids.has(r.repository_id))throw new Error('담당 레포 참조가 없습니다');if(assigned.has(r.repository_id))throw new Error('같은 팀원의 저장소 담당이 중복됩니다');assigned.add(r.repository_id);if(!dateValid(r.valid_from)||(r.valid_until_exclusive&&(!dateValid(r.valid_until_exclusive)||r.valid_until_exclusive<=r.valid_from)))throw new Error(person.display_name+': 담당 기간이 잘못되었습니다');}
+  }
   const repoUrls=new Set<string>();for(const repo of t.repositories){ if(!/^https?:\/\//.test(repo.url))throw new Error('레포 URL은 HTTP(S)여야 합니다');const u=new URL(repo.url);if(u.username||u.password||u.search)throw new Error('레포 URL에 인증·query를 넣을 수 없습니다');const canonical=(u.origin+u.pathname.replace(/\/$/,'').replace(/\.git$/,'')).toLowerCase();if(repoUrls.has(canonical))throw new Error('같은 레포 URL은 한 번 등록하고 여러 팀원에게 연결하세요');repoUrls.add(canonical); }
-  if(!Array.isArray(t.sources.confluence.roots)) throw new Error('Confluence 루트 목록이 필요합니다');for(const item of t.sources.confluence.roots)if(item.repository_ids?.some(id=>!ids.has(id)))throw new Error('Confluence 루트의 repository_ids는 등록된 레포를 참조해야 합니다');
+  if(new Set(t.sources.confluence.roots.map(r=>r.root_id)).size!==t.sources.confluence.roots.length)throw new Error('Confluence 루트 ID가 중복됩니다');
+  for(const item of t.sources.confluence.roots){const u=new URL(item.page_url);if(!['http:','https:'].includes(u.protocol)||u.username||u.password||[...u.searchParams.keys()].some(k=>/token|password|api_key|authorization/i.test(k)))throw new Error('Confluence 루트는 인증 정보 없는 HTTP(S) URL이어야 합니다');if(item.repository_ids?.some(id=>!ids.has(id)))throw new Error('Confluence 루트의 repository_ids는 등록된 레포를 참조해야 합니다');}
   if(t.evaluation_policy.artifact_mode&&!['feature_first','full'].includes(t.evaluation_policy.artifact_mode))throw new Error('artifact_mode는 feature_first 또는 full이어야 합니다');
   const weights=Object.values(t.evaluation_policy.weights);
   const expectedDimensions=['problem_solving','implementation_scope_and_consistency','verification','collaboration','reusable_knowledge'];if(Object.keys(t.evaluation_policy.weights).length!==expectedDimensions.length||expectedDimensions.some(key=>!(key in t.evaluation_policy.weights)))throw new Error('지원하는 평가 항목 5개의 가중치를 지정하세요');

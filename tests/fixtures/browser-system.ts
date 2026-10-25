@@ -17,7 +17,7 @@ export async function browserSystem(){
   async function seedEvaluation(status:'running'|'review_required'='running'){
     const pool=new pg.Pool({connectionString:database.href});
     try{
-      const config=(await pool.query('SELECT id FROM configurations ORDER BY created_at DESC LIMIT 1')).rows[0];
+      const config=(await pool.query('SELECT id FROM configurations ORDER BY activated_at DESC,created_at DESC LIMIT 1')).rows[0];
       const id=randomUUID(),collection=randomUUID(),job=randomUUID();
       await pool.query("INSERT INTO collection_runs(id,configuration_id,status) VALUES($1,$2,'complete')",[collection,config.id]);
       await pool.query('INSERT INTO evaluation_runs(id,collection_id,configuration_id,model,status,summary) VALUES($1,$2,$3,$4,$5,$6)',[id,collection,config.id,{provider_id:'contract',model_id:'contract-model'},status,{management_stage:'repository_catalog',executive_status:'running'}]);
@@ -27,5 +27,5 @@ export async function browserSystem(){
     }finally{await pool.end();}
   }
   async function close(){for(const child of children)child.kill('SIGTERM');await Promise.all(children.map(child=>child.exitCode!==null?Promise.resolve():new Promise<void>(r=>{const timer=setTimeout(()=>{try{if(child.pid&&process.platform!=='win32')process.kill(-child.pid,'SIGKILL');else child.kill('SIGKILL');}catch{}r();},3000);child.once('exit',()=>{clearTimeout(timer);r();});})));await llm.close();await localGit.cleanup();await fs.rm(folder,{recursive:true,force:true});await admin.query('DROP DATABASE "'+name+'" WITH (FORCE)');await admin.end();}
-  try{for(let i=0;i<100;i++){try{if((await fetch(url+'/api/health')).ok)return {url,username:c.application.admin_username,password:c.application.admin_password,configuration:t,close,logs,seedEvaluation};}catch{}await new Promise(r=>setTimeout(r,100));}throw new Error('격리 서버 시작 실패: '+logs.join(''));}catch(e){await close();throw e;}
+  try{for(let i=0;i<100;i++){try{if((await fetch(url+'/api/health')).ok)return {url,username:c.application.admin_username,password:c.application.admin_password,configuration:t,close,logs,seedEvaluation,readConnectionsFile:async()=>JSON.parse(await fs.readFile(file,'utf8')),get llmCalls(){return llm.calls;}};}catch{}await new Promise(r=>setTimeout(r,100));}throw new Error('격리 서버 시작 실패: '+logs.join(''));}catch(e){await close();throw e;}
 }
