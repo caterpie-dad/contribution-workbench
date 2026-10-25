@@ -1,0 +1,84 @@
+import {Client} from '@modelcontextprotocol/sdk/client/index.js';
+import {StdioClientTransport} from '@modelcontextprotocol/sdk/client/stdio.js';
+import {StreamableHTTPClientTransport} from '@modelcontextprotocol/sdk/client/streamableHttp.js';
+import {Connections,TeamConfig} from '../config.js';
+import {request,authHeaders,storeEvidence,gap,inventory} from './common.js';
+import {saveRaw} from '../storage.js';
+
+export type Page={id:string;title:string;body:string;version:number;date:string;actor:string;url:string;type?:string;raw_response_hash?:string};
+export type Attachment={raw_hash:string;text:string|null;mime:string;filename:string;bytes:number};
+export interface WikiAdapter {resolve(url:string,id?:string):Promise<string>;page(id:string,version?:number):Promise<Page>;list(operation:'children'|'versions'|'comments'|'attachments',id:string,cursor?:string,contentType?:string):Promise<{items:any[];next:string|null;raw_response_hash?:string}>;attachment?(item:any):Promise<Attachment>;close():Promise<void>}
+export function pageId(url:string){const u=new URL(url);return u.searchParams.get('pageId')||u.pathname.match(/\/pages\/(\d+)/)?.[1]||u.pathname.match(/\/(\d+)(?:\/|$)/)?.[1]||null;}
+export function resolveWikiLink(link:string,base:string,current?:string){
+  const configured=new URL(base),context=configured.pathname.replace(/\/$/,'');let value=link;
+  // Data Center returns app-relative /rest/api/... links even when installed
+  // under /confluence. Preserve that configured application context.
+  if(context&&value.startsWith('/')&&!value.startsWith('//')&&value!==context&&!value.startsWith(context+'/'))value=context+value;
+  const url=new URL(value,current||base.replace(/\/$/,'')+'/');if(url.origin!==configured.origin)throw new Error('Confluence 링크 호스트 불일치');return url.href;
+}
+export class RestWiki implements WikiAdapter {
+  private base:string;private cloud:boolean;private headers:Record<string,string>;
+  constructor(private c:Connections['systems']['confluence']){this.base=c.url.replace(/\/$/,'');this.cloud=c.deployment==='cloud';this.headers=authHeaders(c.auth);}
+  async resolve(url:string,id?:string){if(new URL(url).origin!==new URL(this.base).origin)throw new Error('Confluence 루트와 연결 호스트가 다릅니다');const found=id||pageId(url);if(found)return found;
+    const r=await fetch(url,{headers:this.headers,redirect:'manual'});const redirect=r.headers.get('location');if(redirect){const resolved=new URL(redirect,url);if(resolved.origin!==new URL(this.base).origin)throw new Error('Confluence redirect 호스트 불일치');const target=pageId(resolved.href);if(target)return target;}
+    const body=await r.text();const match=body.match(/(?:ajs-page-id[^>]*content|data-page-id)=["'](\d+)/);if(match)return match[1];throw new Error('루트 URL의 page ID를 확인할 수 없습니다. page_id를 설정하세요');
+  }
+  async page(id:string,version?:number):Promise<Page>{
+    const suffix=this.cloud?`/api/v2/pages/${id}?body-format=storage${version?'&version='+version:''}`:`/rest/api/content/${id}?expand=body.storage,version,history,ancestors${version?'&status=historical&version='+version:''}`;
+    const capture=await request(this.base+suffix,this.headers);const p=capture.body;const actual=Number(p.version?.number);
+    if(version&&actual!==version)throw new Error('요청한 과거 버전과 반환 버전이 다릅니다');
+    const body=p.body?.storage?.value;if(typeof body!=='string'||String(p.id)!==String(id)||!actual)throw new Error('Confluence 본문·ID·버전이 누락되었습니다');
+    return {id:String(p.id),title:p.title,body,version:actual,date:p.version?.createdAt||p.version?.when||'',actor:p.version?.authorId||p.version?.by?.accountId||p.version?.by?.userKey||p.version?.by?.username||'',url:p._links?.webui?resolveWikiLink(p._links.webui,this.base):this.base+'/pages/viewpage.action?pageId='+id,type:p.type||'page',raw_response_hash:capture.rawHash};
+  }
+  async list(operation:'children'|'versions'|'comments'|'attachments',id:string,cursor?:string,contentType='page'){
+    let suffix:string;
+    if(this.cloud){const collections:Record<string,string>={page:'pages',folder:'folders',database:'databases',whiteboard:'whiteboards',embed:'embeds'};if(operation==='children'&&!collections[contentType])throw new Error('자식 탐색 미지원 콘텐츠 유형: '+contentType);suffix=operation==='children'?`/api/v2/${collections[contentType]}/${id}/direct-children?limit=100`:operation==='versions'?`/api/v2/pages/${id}/versions?limit=100`:operation==='comments'?`/api/v2/pages/${id}/footer-comments?body-format=storage&limit=100`:`/api/v2/pages/${id}/attachments?limit=100`;}
+    else suffix=operation==='children'?`/rest/api/content/${id}/child/page?limit=100`:operation==='versions'?`/rest/api/content/${id}/version?limit=100`:operation==='comments'?`/rest/api/content/${id}/child/comment?expand=body.storage,version&depth=all&limit=100`:`/rest/api/content/${id}/child/attachment?expand=version&limit=100`;
+    const url=cursor?resolveWikiLink(cursor,this.base):this.base+suffix;
+    const r=await request(url,this.headers);if(!Array.isArray(r.body.results))throw new Error('Confluence 목록 형식 오류');
+    const next=r.next||r.body._links?.next;return {items:r.body.results,next:next?resolveWikiLink(next,this.base,url):null,raw_response_hash:r.rawHash};
+  }
+  async close(){}
+  async attachment(item:any):Promise<Attachment>{const link=item.downloadLink||item._links?.download;if(!link)throw new Error('첨부 다운로드 링크가 없습니다');const url=new URL(resolveWikiLink(link,this.base));if(url.origin!==new URL(this.base).origin)throw new Error('다른 호스트의 첨부 다운로드는 별도 연결 검토가 필요합니다');const response=await fetch(url,{headers:this.headers,redirect:'error',signal:AbortSignal.timeout(45000)});if(!response.ok)throw new Error('첨부 다운로드 HTTP '+response.status);const bytes=Buffer.from(await response.arrayBuffer());const mime=(response.headers.get('content-type')||item.mediaType||item.metadata?.mediaType||'application/octet-stream').split(';')[0];return {raw_hash:await saveRaw(bytes),text:/^(text\/|application\/(json|xml|javascript))/.test(mime)?bytes.toString('utf8'):null,mime,filename:item.title||item.fileName||item.id,bytes:bytes.length};}
+}
+function template(value:unknown,vars:Record<string,unknown>):unknown{if(typeof value==='string'){const exact=value.match(/^\{\{(\w+)\}\}$/);return exact?vars[exact[1]]:value.replace(/\{\{(\w+)\}\}/g,(_,key)=>String(vars[key]??''));}if(Array.isArray(value))return value.map(x=>template(x,vars));if(value&&typeof value==='object')return Object.fromEntries(Object.entries(value).map(([k,v])=>[k,template(v,vars)]).filter(([,v])=>v!==undefined));return value;}
+export class McpWiki implements WikiAdapter {
+  private client=new Client({name:'contribution-collector',version:'0.1.0'});private connected=false;
+  constructor(private c:Connections['systems']['confluence']){}
+  private async call(operation:string,vars:Record<string,unknown>){const m=this.c.mcp;if(!m)throw new Error('MCP 연결 설정이 없습니다');if(!this.connected){
+    const transport=m.url?new StreamableHTTPClientTransport(new URL(m.url),{requestInit:{headers:authHeaders(this.c.auth)}}):new StdioClientTransport({command:m.command!,args:m.args||[],env:{PATH:process.env.PATH||'',...m.env,CONFLUENCE_TOKEN:this.c.auth.token||'',CONFLUENCE_URL:this.c.url},stderr:'pipe'});
+    await this.client.connect(transport);this.connected=true;
+  }
+    const binding=m.bindings?.[operation];if(!binding)throw new Error('MCP 미지원 기능: '+operation);
+    const result=await this.client.callTool({name:binding.tool,arguments:template(binding.arguments,vars) as Record<string,unknown>},undefined,{timeout:45000});const rawHash=await saveRaw(JSON.stringify(result));
+    if(result.isError)throw new Error('MCP 도구 조회 실패: '+operation);
+    let data:any=result.structuredContent;
+    if(!data){const text=(result.content as any[]).filter(x=>x.type==='text').map(x=>x.text).join('\n');try{data=JSON.parse(text);}catch{throw new Error('MCP 원본이 정규화된 JSON 응답이 아닙니다. binding/bridge를 지정하세요');}}
+    if(binding.result_path)for(const key of binding.result_path.split('.'))data=data?.[key];return data&&typeof data==='object'?{...data,_collector_raw_response_hash:rawHash}:data;
+  }
+  async resolve(url:string,id?:string){if(new URL(url).origin!==new URL(this.c.url).origin)throw new Error('MCP 루트 URL과 연결 호스트가 다릅니다');return id||pageId(url)||(await this.call('resolve',{url})).id;}
+  async page(id:string,version?:number):Promise<Page>{const data=await this.call('page',{page_id:id,version});if(!data||String(data.id)!==id||typeof data.body!=='string'||!data.version||version&&Number(data.version)!==version)throw new Error('MCP 본문·버전 계약 오류');return {...data,id:String(data.id),version:Number(data.version),raw_response_hash:data._collector_raw_response_hash};}
+  async list(operation:'children'|'versions'|'comments'|'attachments',id:string,cursor?:string,contentType='page'){const binding=operation==='children'&&this.c.mcp?.bindings?.[operation+':'+contentType]?operation+':'+contentType:operation;const data=await this.call(binding,{page_id:id,content_id:id,content_type:contentType,cursor});if(!Array.isArray(data?.items)||!('next' in data))throw new Error('MCP 목록 완료 표식·items가 없습니다');return {items:data.items,next:data.next,raw_response_hash:data._collector_raw_response_hash} as {items:any[];next:string|null;raw_response_hash?:string};}
+  async close(){if(this.connected)await this.client.close();}
+  async attachment(item:any):Promise<Attachment>{const result=await this.call('attachment',{attachment_id:String(item.id)});if(typeof result?.base64!=='string')throw new Error('MCP 첨부의 base64 원본이 없습니다');const bytes=Buffer.from(result.base64,'base64');const mime=result.mime||'application/octet-stream';return {raw_hash:await saveRaw(bytes),text:/^(text\/|application\/(json|xml))/.test(mime)?bytes.toString('utf8'):null,mime,filename:result.filename||String(item.id),bytes:bytes.length};}
+}
+export async function wikiPages(adapter:WikiAdapter,operation:'children'|'versions'|'comments'|'attachments',id:string,contentType='page'){const items:any[]&{raw_response_hashes?:string[]}=[];Object.defineProperty(items,'raw_response_hashes',{value:[],enumerable:false});let cursor:string|undefined;const seen=new Set<string>();do{const response=await adapter.list(operation,id,cursor,contentType);if(response.next!==null&&typeof response.next!=='string')throw new Error('Confluence cursor는 문자열 또는 null이어야 합니다');if(response.raw_response_hash)items.raw_response_hashes!.push(response.raw_response_hash);items.push(...response.items.map(item=>({...item,_collector_raw_response_hash:response.raw_response_hash||item._collector_raw_response_hash})));if(response.next){if(seen.has(response.next))throw new Error('Confluence 반복 cursor');seen.add(response.next);cursor=response.next;}else cursor=undefined;}while(cursor);return items;}
+export async function collectWiki(run:string,t:TeamConfig,c:Connections,provided?:WikiAdapter){
+  if(t.demo?.docs_surrogate){await inventory(run,t.sources.confluence.source_id,'surrogate-mode','population','partial',{population_known:true,reason:'실제 Confluence 대신 Git docs 사용. Confluence 접속·댓글·첨부 수집을 증명하지 않음'});return;}
+  const adapter=provided||(c.systems.confluence.transport==='mcp'?new McpWiki(c.systems.confluence):new RestWiki(c.systems.confluence));
+  const source=t.sources.confluence.source_id;const visited=new Set<string>();
+  try{for(const root of t.sources.confluence.roots){try{const rootId=await adapter.resolve(root.page_url,root.page_id);const queue=[{id:rootId,type:'page'}];const membership=new Set<string>();while(queue.length){const entry=queue.shift()!;const id=entry.id;if(membership.has(id))continue;membership.add(id);
+    await inventory(run,source,root.root_id+':'+id,'root_membership','complete',{root:root.root_id,page_id:id});
+    let children:any[]=[];try{children=await wikiPages(adapter,'children',id,entry.type);for(const child of children){const type=String(child.type||child.contentType||'page').toLowerCase().replace('smartlink','embed');queue.push({id:String(child.id),type});}await inventory(run,source,'children:'+id,'population','complete',{population_known:true,content_type:entry.type,children:children.map(x=>String(x.id)),raw_response_hashes:(children as any).raw_response_hashes||[]});}catch(e){await gap(run,source,'children:'+id,e);}
+    if(id===rootId&&!root.include_root)continue;if(visited.has(id))continue;visited.add(id);
+    if(entry.type!=='page'){await inventory(run,source,'container:'+id,'container','complete',{content_type:entry.type,children_traversed:true});if(entry.type!=='folder')await gap(run,source,'content-body:'+id,'페이지 외 콘텐츠 본문의 해석은 미지원: '+entry.type,true);continue;}
+    try{const current=await adapter.page(id);const versions=await wikiPages(adapter,'versions',id);await inventory(run,source,'versions:'+id,'population','complete',{population_known:true,versions:versions.map(v=>v.number||v.version?.number),raw_response_hashes:versions.raw_response_hashes||[]});let before:number|null=null;const within:number[]=[];
+      for(const v of versions){const n=Number(v.number||v.version?.number);const date=Date.parse(v.createdAt||v.when||v.version?.createdAt||'');if(!n||!Number.isFinite(date)){await gap(run,source,'version-metadata:'+id,'버전 번호·시각 미확인',true);continue;}if(date<Date.parse(t.period.start_inclusive))before=Math.max(before||0,n);else if(date<Date.parse(t.period.end_exclusive))within.push(n);}
+      const requiredVersions=[...new Set([...within,...within.filter(v=>v>1).map(v=>v-1),...(before?[before]:[]),current.version])];
+      for(const version of requiredVersions){try{const p=version===current.version?current:await adapter.page(id,version);const context=!within.includes(version);await storeEvidence(run,{source_id:source,object_id:id,revision:String(version),kind:context?'wiki_context':'wiki_page',title:p.title,url:p.url,occurred_at:p.date||null,actors:context||!p.actor?[]:[p.actor],body:p.body,metadata:{root:root.root_id,page_id:id,context_only:context,previous_revision:version>1?String(version-1):null,is_creation:version===1,editor_is_not_sole_author:true,transport:c.systems.confluence.transport,raw_response_hash:p.raw_response_hash||null}});}catch(e){await gap(run,source,'body:'+id+':'+version,e,true);}}
+      for(const op of ['comments','attachments'] as const){try{const items=await wikiPages(adapter,op,id);for(const item of items){const originalDate=item.createdAt||item.created_at;const date=item.version?.createdAt||item.version?.when||item.updatedAt||item.updated_at||originalDate;const actor=item.version?.authorId||item.version?.by?.accountId||item.version?.by?.userKey||item.version?.by?.username||item.authorId||'';const context=!Number.isFinite(Date.parse(date||''))||Date.parse(date)<Date.parse(t.period.start_inclusive)||Date.parse(date)>=Date.parse(t.period.end_exclusive);let attachment:Attachment|undefined;if(op==='attachments'){try{if(!adapter.attachment)throw new Error('첨부 원본 조회 기능 미지원');attachment=await adapter.attachment(item);}catch(e){await gap(run,source,'attachment-body:'+item.id,e,true);}}const body=attachment?.text??(item.body?.storage?.value||item.body||JSON.stringify(item));await storeEvidence(run,{source_id:source,object_id:op+':'+item.id,revision:String(item.version?.number||1),kind:context?'wiki_context':op==='comments'?'wiki_comment':attachment?.text?'attachment_text':'attachment_metadata',title:item.title||op,url:item._links?.webui?resolveWikiLink(item._links.webui,c.systems.confluence.url,current.url):current.url,occurred_at:date||null,actors:context?[]:[actor].filter(Boolean),body:typeof body==='string'?body:JSON.stringify(body),metadata:{context_only:context,page_id:id,original_created_at:originalDate||null,observed_actor:actor||null,historical_body_known:item.version?.number&&Number.isFinite(Date.parse(date||''))?Date.parse(date)<Date.parse(t.period.end_exclusive):null,raw_response_hash:item._collector_raw_response_hash||null,attachment_content_collected:!!attachment,attachment:attachment?{raw_hash:attachment.raw_hash,mime:attachment.mime,filename:attachment.filename,bytes:attachment.bytes,text_extracted:attachment.text!==null}:null}});if(originalDate&&Date.parse(originalDate)<Date.parse(t.period.end_exclusive)&&Date.parse(date)>=Date.parse(t.period.end_exclusive))await gap(run,source,op+'-history:'+item.id,'기간 뒤에 편집된 현재 본문은 맥락으로 보존했습니다. 기간 내 과거 댓글·첨부 버전 본문은 별도 확인이 필요합니다',true);if(attachment&&attachment.text===null)await gap(run,source,'attachment-interpretation:'+item.id,'첨부 바이너리 원본은 보존했으며 해당 형식의 자동 텍스트·시각 해석은 미지원',true);}
+        await inventory(run,source,op+':'+id,'population','complete',{population_known:true,count:items.length});}catch(e){await gap(run,source,op+':'+id,e);}}
+      if(c.systems.confluence.deployment==='cloud')await gap(run,source,'inline-comments:'+id,'Cloud inline comment 별도 endpoint 미수집');
+    }catch(e){await gap(run,source,'page:'+id,e);}
+  }}catch(e){await gap(run,source,'root:'+root.root_id,e);}}}finally{await adapter.close();}
+}

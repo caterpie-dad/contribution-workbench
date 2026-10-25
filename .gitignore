@@ -1,0 +1,12 @@
+# Local system URLs and credentials; keep the empty example in version control.
+/config/*.local.json
+/config/*.local.json.*
+
+# Generated OpenCode configuration and process working files.
+/runtime/
+/node_modules/
+/dist/
+/coverage/
+/test-results/
+/playwright-report/
+*.tsbuildinfo

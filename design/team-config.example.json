@@ -1,0 +1,174 @@
+{
+  "schema_version": "0.4",
+  "example_only": true,
+  "notice": "계정·대상 URL·기간은 가상 예시다. 시스템 URL·토큰·모델은 별도 연결 파일에서 관리한다. 이 파일은 업무 애플리케이션의 설정 계약이며 OpenCode 설정 파일이 아니다.",
+  "connections": {
+    "file": "config/connections.local.json",
+    "path_base": "application_root",
+    "path_override_env": "CONTRIB_CONNECTIONS_FILE"
+  },
+  "timezone": "Asia/Seoul",
+  "period": {
+    "start_inclusive": "2026-07-01T00:00:00+09:00",
+    "end_exclusive": "2026-10-01T00:00:00+09:00",
+    "as_of": "2026-10-01T00:00:00+09:00"
+  },
+  "sources": {
+    "github": {
+      "source_id": "github-main",
+      "connection_ref": "github",
+      "ref_scope": [
+        "default_branch",
+        "all_visible_branch_heads",
+        "pull_request_heads"
+      ]
+    },
+    "confluence": {
+      "source_id": "confluence-main",
+      "connection_ref": "confluence",
+      "transport_policy": {
+        "selection": "verified_capability_per_operation",
+        "candidate_backends": [
+          "mcp",
+          "api",
+          "authenticated_http",
+          "authenticated_browser"
+        ],
+        "mcp_is_required": false,
+        "prefer_existing_verified_access": true,
+        "preserve_original_response": true,
+        "subtree_completion": "explicit_listing_completion",
+        "on_incomplete_response": "try_capable_route_or_record_partial"
+      },
+      "roots": [
+        {
+          "root_id": "root-platform",
+          "page_id": "100",
+          "page_url": "https://wiki.company.example/pages/viewpage.action?pageId=100",
+          "include_root": true
+        },
+        {
+          "root_id": "root-engineering",
+          "page_id": "200",
+          "page_url": "https://wiki.company.example/pages/viewpage.action?pageId=200",
+          "include_root": true
+        }
+      ],
+      "traversal": "all_descendants",
+      "membership_policy": "snapshot_plus_observed_history",
+      "content_scope": [
+        "page",
+        "comments",
+        "related_attachments"
+      ],
+      "unsupported_content_policy": "record_gap"
+    }
+  },
+  "repositories": [
+    {
+      "repository_id": "repo-platform",
+      "source_id": "github-main",
+      "url": "https://github.company.example/engineering/platform",
+      "context_paths": [
+        "README.md",
+        "docs/requirements.md"
+      ]
+    },
+    {
+      "repository_id": "repo-console",
+      "source_id": "github-main",
+      "url": "https://github.company.example/engineering/console",
+      "context_paths": [
+        "README.md",
+        "docs/requirements.md"
+      ]
+    }
+  ],
+  "members": [
+    {
+      "person_id": "member-a",
+      "display_name": "팀원 A",
+      "role_profile": "developer",
+      "identities": {
+        "github_login": "member-a",
+        "commit_emails": [
+          "member-a@company.example"
+        ],
+        "confluence_account_ref": "user-key-a"
+      },
+      "repository_assignments": [
+        {
+          "repository_id": "repo-platform",
+          "expected_role": "developer",
+          "valid_from": "2026-07-01",
+          "valid_until_exclusive": null
+        }
+      ]
+    },
+    {
+      "person_id": "member-b",
+      "display_name": "팀원 B",
+      "role_profile": "developer",
+      "identities": {
+        "github_login": "member-b",
+        "commit_emails": [
+          "member-b@company.example"
+        ],
+        "confluence_account_ref": "user-key-b"
+      },
+      "repository_assignments": [
+        {
+          "repository_id": "repo-platform",
+          "expected_role": "developer",
+          "valid_from": "2026-07-01",
+          "valid_until_exclusive": null
+        },
+        {
+          "repository_id": "repo-console",
+          "expected_role": "maintainer",
+          "valid_from": "2026-07-01",
+          "valid_until_exclusive": null
+        }
+      ]
+    }
+  ],
+  "collection_policy": {
+    "collect_other_contributors_as_context": true,
+    "keep_raw_snapshots": true,
+    "unknown_identity_policy": "review_required",
+    "missing_core_evidence_policy": "defer_affected_assessments",
+    "unknown_population_policy": "show_unknown_not_percentage"
+  },
+  "evaluation_policy": {
+    "rubric_version": "v0.2-with-review-requirements",
+    "validation_status": "not_validated",
+    "weights": {
+      "problem_solving": 0.3,
+      "implementation_scope_and_consistency": 0.2,
+      "verification": 0.25,
+      "collaboration": 0.15,
+      "reusable_knowledge": 0.1
+    },
+    "finalization": "manager_review",
+    "missing_score": null,
+    "artifact_mode": "feature_first"
+  },
+  "opencode": {
+    "connection_ref": "opencode",
+    "runtime_major": null,
+    "client_implementation": "select_after_runtime_version_check",
+    "transport": "sdk",
+    "model_selection": {
+      "allow_run_override": true,
+      "scope": "evaluation_run",
+      "candidate_policy": "configured_enabled_models",
+      "availability_policy": "verify_with_active_opencode",
+      "fallback_policy": "fail_without_switch",
+      "correction_policy": "reuse_original_run_model"
+    },
+    "max_parallel_requests": 2,
+    "version_policy": "pin_opencode_and_matching_sdk",
+    "structured_output_policy": "schema_with_server_validation",
+    "session_policy": "new_session_per_task"
+  }
+}

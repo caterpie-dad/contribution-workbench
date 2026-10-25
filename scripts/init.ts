@@ -1,0 +1,4 @@
+import fs from 'node:fs/promises';
+import {randomBytes} from 'node:crypto';
+const file=process.env.CONTRIB_CONNECTIONS_FILE||'config/connections.local.json';
+if(await fs.access(file).then(()=>true,()=>false)){console.log('Existing local connection file retained:',file);}else{const c=JSON.parse(await fs.readFile('config/connections.example.json','utf8'));c.example_only=false;c.application={admin_username:'admin',admin_password:randomBytes(18).toString('hex'),session_secret:randomBytes(32).toString('hex'),database_url:'postgresql://contribution:contribution-local@127.0.0.1:55432/contribution'};c.systems.opencode.manage_process=true;c.systems.opencode.transport='sdk';await fs.writeFile(file,JSON.stringify(c,null,2),{mode:0o600});console.log('Created owner-readable local connection file:',file);console.log('Edit system URLs/tokens/models and application admin_password before running.');}

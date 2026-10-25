@@ -1,0 +1,25 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "autoupdate": false,
+  "enabled_providers": ["corp"],
+  "model": "corp/corp-evaluator",
+  "small_model": "corp/corp-evaluator",
+  "provider": {
+    "corp": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "사내 평가 LLM",
+      "options": {
+        "baseURL": "{env:CORP_LLM_BASE_URL}",
+        "apiKey": "{env:CORP_LLM_TOKEN}"
+      },
+      "models": {
+        "corp-evaluator": {
+          "name": "사내 평가 모델 A"
+        },
+        "corp-evaluator-alt": {
+          "name": "사내 평가 모델 B"
+        }
+      }
+    }
+  }
+}

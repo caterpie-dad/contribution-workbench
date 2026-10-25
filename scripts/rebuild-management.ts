@@ -1,0 +1,6 @@
+import fs from 'node:fs/promises';
+import {db,one} from '../src/db.js';
+import {createEvaluation} from '../src/jobs.js';
+import {managementRevision} from '../src/management/engine.js';
+const file='runtime/verification/demo-run.json';
+try{const current=JSON.parse(await fs.readFile(file,'utf8'));const reference=await one('SELECT * FROM evaluation_runs WHERE id=$1',[process.argv[2]||current.evaluation_id]);const active=(await db.query("SELECT id FROM evaluation_runs WHERE collection_id=$1 AND status IN ('pending','running') AND summary->'evaluation_contract'->>'management_revision'=$2",[reference.collection_id,managementRevision])).rows[0];if(active)throw new Error('같은 기능 평가 기준의 실행이 이미 진행 중입니다: '+active.id);const id=await createEvaluation(reference.collection_id,{provider_id:reference.model.provider_id,model_id:reference.model.model_id},'demo-functional-upgrade',reference.id);await fs.writeFile('runtime/verification/demo-run-before-functional-'+current.evaluation_id+'.json',JSON.stringify(current,null,2));await fs.writeFile(file,JSON.stringify({...current,evaluation_id:id,previous_evaluation_id:reference.id,management_revision:managementRevision},null,2));console.log('기능·시스템 영향 기준의 새 실행:',id,'모델:',reference.model.model_id);}finally{await db.end();}

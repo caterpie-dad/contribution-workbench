@@ -1,0 +1,53 @@
+{
+  "name": "contribution-workbench",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.16"
+  },
+  "scripts": {
+    "dev": "tsx src/server.ts",
+    "worker": "tsx src/worker.ts",
+    "build": "tsc --noEmit && vite build",
+    "start": "tsx src/server.ts",
+    "migrate": "tsx scripts/migrate.ts",
+    "demo": "tsx scripts/demo.ts",
+    "verify": "tsx scripts/verify.ts",
+    "verify:management": "tsx scripts/verify-management.ts",
+    "verify:management-browser": "tsx scripts/verify-management-browser.ts",
+    "demo:management": "tsx scripts/rebuild-management.ts",
+    "verify:process": "tsx scripts/verify-process.ts",
+    "verify:release": "tsx scripts/verify-release.ts",
+    "doctor": "tsx scripts/doctor.ts",
+    "resume": "tsx scripts/resume.ts",
+    "package:source": "tsx scripts/package-source.ts",
+    "test": "tsx scripts/test.ts",
+    "test:browser": "playwright test",
+    "build:executive": "tsx scripts/build-executive.ts"
+  },
+  "dependencies": {
+    "@fastify/cookie": "^11.0.2",
+    "@fastify/static": "^8.3.0",
+    "@modelcontextprotocol/sdk": "^1.27.1",
+    "@opencode-ai/sdk": "1.19.4",
+    "ajv": "^8.17.1",
+    "fastify": "^5.6.2",
+    "opencode-ai": "1.19.4",
+    "pg": "^8.16.3",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "undici": "7.28.0",
+    "zod": "^4.1.12"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.56.1",
+    "@types/node": "^22.18.12",
+    "@types/pg": "^8.15.5",
+    "@types/react": "^19.2.2",
+    "@types/react-dom": "^19.2.2",
+    "tsx": "^4.20.6",
+    "typescript": "^5.9.3",
+    "vite": "^7.1.12"
+  }
+}

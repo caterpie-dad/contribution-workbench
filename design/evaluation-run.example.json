@@ -1,0 +1,13 @@
+{
+  "schema_version": "0.4",
+  "example_only": true,
+  "notice": "평가 실행 요청의 제안 예시다. request만 업무 API의 본문이며 실행·설정 ID와 모델은 가상 값이다. model을 생략하면 연결 파일의 기본 모델을 실행 생성 시 확정한다.",
+  "request": {
+    "collection_run_id": "collection-example-001",
+    "configuration_revision": "configuration-example-001",
+    "model": {
+      "provider_id": "corp",
+      "model_id": "corp-evaluator-alt"
+    }
+  }
+}

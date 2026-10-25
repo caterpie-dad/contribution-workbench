@@ -1,0 +1,62 @@
+{
+  "schema_version": "0.4",
+  "example_only": true,
+  "systems": {
+    "confluence": {
+      "url": "https://wiki.company.example",
+      "deployment": "data_center",
+      "transport": "rest",
+      "auth": {
+        "scheme": "bearer",
+        "username": null,
+        "token": ""
+      }
+    },
+    "github": {
+      "url": "https://github.company.example",
+      "deployment": "enterprise_server",
+      "auth": {
+        "scheme": "bearer",
+        "token": ""
+      }
+    },
+    "opencode": {
+      "server_url": "http://127.0.0.1:4096",
+      "manage_process": true,
+      "transport": "sdk",
+      "server_auth": {
+        "scheme": "none",
+        "username": null,
+        "password": null,
+        "token": null
+      },
+      "llm": {
+        "url": "https://llm.company.example/v1",
+        "provider_id": "corp",
+        "default_model_id": "corp-evaluator",
+        "models": [
+          {
+            "model_id": "corp-evaluator",
+            "display_name": "사내 평가 모델 A",
+            "enabled": true,
+            "context_limit_tokens": null
+          },
+          {
+            "model_id": "corp-evaluator-alt",
+            "display_name": "사내 평가 모델 B",
+            "enabled": true,
+            "context_limit_tokens": null
+          }
+        ],
+        "protocol": "chat_completions",
+        "token": ""
+      }
+    }
+  },
+  "application": {
+    "admin_username": "admin",
+    "admin_password": "",
+    "session_secret": "",
+    "database_url": "postgresql://contribution:contribution-local@127.0.0.1:55432/contribution"
+  }
+}

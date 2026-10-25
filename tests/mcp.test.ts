@@ -1,0 +1,6 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {McpWiki,wikiPages} from '../src/collectors/confluence.js';
+import {readConnections,root} from '../src/config.js';
+import path from 'node:path';
+test('실제 MCP stdio 서버에서 원본과 pagination을 LLM 없이 코드로 수집한다',async()=>{const c=structuredClone(readConnections().systems.confluence);c.url='https://wiki.test';c.transport='mcp';c.mcp={command:process.execPath,args:['--import','tsx',path.join(root,'tests/fixtures/mcp.ts')],bindings:{page:{tool:'read_page',arguments:{page_id:'{{page_id}}',version:'{{version}}'}},...Object.fromEntries(['children','versions','comments','attachments'].map(operation=>[operation,{tool:'list_items',arguments:{operation,page_id:'{{page_id}}',cursor:'{{cursor}}'}}]))}};const adapter=new McpWiki(c);try{const page=await adapter.page('1',2);assert.equal(page.version,2);assert(page.body.includes('Actual MCP protocol'));const children=await wikiPages(adapter,'children','1');assert.deepEqual(children.map(item=>item.id),['2']);assert.equal(children.raw_response_hashes?.length,2);assert(children.every(item=>/^[a-f0-9]{64}$/.test(item._collector_raw_response_hash)));assert.equal((await wikiPages(adapter,'versions','1')).length,1);assert.deepEqual(await wikiPages(adapter,'comments','1'),[]);}finally{await adapter.close();}});

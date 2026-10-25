@@ -1,0 +1,78 @@
+{
+  "schema_version": "0.4",
+  "example_only": true,
+  "notice": "URL·MCP·API·인증된 웹 읽기를 사용하는 업무 애플리케이션의 제안 연결 프로필이다. OpenCode 자체 설정 파일이 아니며 사내 PC의 기존 설정을 덮어쓰지 않는다.",
+  "base_application_configuration": "team-config.example.json",
+  "connection_configuration": "inherit_from_base_application_configuration",
+  "deployment": {
+    "web_and_worker": "host_native",
+    "dashboard_bind": "127.0.0.1",
+    "database": "postgresql",
+    "opencode_runtime": "existing_host_installation"
+  },
+  "connection_observations": {
+    "source": "user_report",
+    "confluence_access": true,
+    "github_access": true,
+    "opencode_available": true,
+    "confluence_mcp_used_from_terminal": true,
+    "confluence_target_urls_available": true,
+    "programmatic_collection_verified": false
+  },
+  "host_runtime": {
+    "opencode_major": null,
+    "working_directory": null,
+    "mcp_server_name": null,
+    "mcp_transport": "discover",
+    "configuration_policy": "reuse_supported_existing_configuration_without_overwrite",
+    "authentication_policy": "use_supported_host_authentication_path"
+  },
+  "confluence_collection": {
+    "target_input": "root_page_urls",
+    "selection_policy": "verified_capability_per_operation",
+    "candidate_backends": [
+      "mcp",
+      "api",
+      "authenticated_http",
+      "authenticated_browser"
+    ],
+    "selected_routes": {},
+    "selection_status": "select_from_verified_available_routes",
+    "mcp_is_required": false,
+    "prefer_existing_verified_access": true,
+    "prefer_complete_structured_source_data": true,
+    "allow_model_driven_population_selection": false,
+    "require_original_source_result": true,
+    "mcp_tool_bindings": {
+      "get_page": null,
+      "list_children_or_descendants": null,
+      "list_versions": null,
+      "get_version_body": null,
+      "list_comments": null,
+      "get_attachment": null
+    },
+    "web_session_profile_ref": null,
+    "subtree_completion_policy": "require_explicit_listing_completion",
+    "body_only_counts_as_complete_collection": false,
+    "login_page_counts_as_document": false,
+    "unsupported_capability_policy": "try_verified_capable_route_then_record_gap",
+    "missing_historical_body_policy": "defer_affected_judgments",
+    "deduplication_key": ["source_id", "page_id", "revision"],
+    "unknown_revision_policy": "keep_capture_id_and_do_not_infer_history"
+  },
+  "github_collection": {
+    "backend": "api_and_git",
+    "automation_authentication_status": "not_yet_verified"
+  },
+  "evaluation": {
+    "runtime": "host_opencode",
+    "transport": "matching_sdk_or_cli_adapter",
+    "source_policy": "fixed_collected_evidence_pack",
+    "live_context_request_policy": "return_request_to_collection_queue"
+  },
+  "corrections": {
+    "preserve_original_evidence": true,
+    "preserve_previous_reports": true,
+    "recompute_all_affected_people": true
+  }
+}

@@ -1,0 +1,35 @@
+{
+  "example_only": true,
+  "correction_id": "correction-example-001",
+  "base_report_version": "report-example-r1",
+  "kind": "contribution_attribution",
+  "target": {
+    "case_id": "case-example-104",
+    "field": "contributor_roles.problem_analysis"
+  },
+  "previous_value": {
+    "person_id": "member-b",
+    "role": "problem_analysis",
+    "verification": "inferred"
+  },
+  "replacement_value": {
+    "person_id": "member-a",
+    "role": "problem_analysis",
+    "verification": "manager_attested"
+  },
+  "reason": "가상 예시: 제출자는 B지만 당시 토론과 관리자 확인에 따르면 원인 분석은 A가 담당했다. B의 구현·검증 기여는 별도로 유지한다.",
+  "evidence_refs": [
+    {
+      "evidence_id": "evidence-example-issue-comment-17",
+      "revision": "snapshot-example-1",
+      "locator": "comment-body"
+    }
+  ],
+  "attestation": {
+    "source_type": "manager_attestation",
+    "actor_id": "manager-example",
+    "note": "관리자 확인은 원본 메타데이터와 별도로 표시한다. 원본을 덮어쓰지 않는다."
+  },
+  "status": "proposed",
+  "impact_policy": "recompute_all_dependent_people_and_reports"
+}

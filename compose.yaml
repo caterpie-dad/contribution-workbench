@@ -1,0 +1,39 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: contribution
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-contribution-local}
+      POSTGRES_DB: contribution
+    ports: ["127.0.0.1:55432:5432"]
+    volumes: ["postgres_data:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U contribution"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+  web:
+    profiles: ["app"]
+    build: .
+    user: "${CONTRIB_UID:-1000}:${CONTRIB_GID:-1000}"
+    command: ["npm", "start"]
+    environment:
+      HOST: 0.0.0.0
+      PORT: 3100
+      DATABASE_URL: postgresql://contribution:${POSTGRES_PASSWORD:-contribution-local}@postgres:5432/contribution
+    ports: ["127.0.0.1:3100:3100"]
+    volumes: ["./config:/app/config:ro", "./runtime:/app/runtime"]
+    depends_on:
+      postgres: { condition: service_healthy }
+  worker:
+    profiles: ["app"]
+    build: .
+    user: "${CONTRIB_UID:-1000}:${CONTRIB_GID:-1000}"
+    command: ["npm", "run", "worker"]
+    environment:
+      DATABASE_URL: postgresql://contribution:${POSTGRES_PASSWORD:-contribution-local}@postgres:5432/contribution
+    volumes: ["./config:/app/config:ro", "./runtime:/app/runtime"]
+    depends_on:
+      postgres: { condition: service_healthy }
+volumes:
+  postgres_data:
